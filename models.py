@@ -22,12 +22,19 @@
 
 ## django
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from django.template.defaultfilters import capfirst
+from django.contrib.auth.models import User
+from django.conf import settings
 
-## machiavelli
-import machiavelli.models as machiavelli
-import machiavelli.signals as signals
+## machiavelli - lazy import to avoid circular dependencies
+_machiavelli_models = None
+
+def get_machiavelli_models():
+	global _machiavelli_models
+	if _machiavelli_models is None:
+		import machiavelli.models as _machiavelli_models
+	return _machiavelli_models
 
 import condottieri_scenarios.models as scenarios
 
@@ -35,10 +42,10 @@ class BaseEvent(models.Model):
 	"""
 BaseEvent is the parent class for all kind of game events.
 	"""
-	game = models.ForeignKey(machiavelli.Game, on_delete=models.CASCADE)
+	game = models.ForeignKey('machiavelli.Game', on_delete=models.CASCADE)
 	year = models.PositiveIntegerField()
-	season = models.PositiveIntegerField(choices=machiavelli.SEASONS)
-	phase = models.PositiveIntegerField(choices=machiavelli.GAME_PHASES)
+	season = models.PositiveIntegerField(choices=property(lambda self: get_machiavelli_models().SEASONS))
+	phase = models.PositiveIntegerField(choices=property(lambda self: get_machiavelli_models().GAME_PHASES))
 	classname = models.CharField(max_length=32, editable=False)
 	
 	def get_concrete(self):
@@ -98,7 +105,7 @@ class NewUnitEvent(BaseEvent):
 	""" Event triggered when a new unit is placed in the map. """
 
 	country = models.ForeignKey(scenarios.Country, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	area = models.ForeignKey(scenarios.Area, on_delete=models.CASCADE)
 	
 	def event_class(self):
@@ -112,7 +119,7 @@ class NewUnitEvent(BaseEvent):
 						}
 
 def log_new_unit(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(NewUnitEvent, sender.player.game,
 					classname="NewUnitEvent",
 					country=sender.player.contender.country,
@@ -124,7 +131,7 @@ signals.unit_placed.connect(log_new_unit)
 class DisbandEvent(BaseEvent):
 	""" Event triggered when a unit is disbanded. """
 	country = models.ForeignKey(scenarios.Country, blank=True, null=True, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	area = models.ForeignKey(scenarios.Area, on_delete=models.CASCADE)
 
 	def event_class(self):
@@ -143,7 +150,7 @@ class DisbandEvent(BaseEvent):
 						'area': self.area.name}
 			
 def log_disband(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(DisbandEvent, sender.player.game,
 					classname="DisbandEvent",
 					country=sender.player.contender.country,
@@ -155,16 +162,16 @@ signals.unit_disbanded.connect(log_disband)
 class OrderEvent(BaseEvent):
 	""" Event triggered when an order is confirmed. """
 	country = models.ForeignKey(scenarios.Country, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	origin = models.ForeignKey(scenarios.Area, related_name='event_origin', on_delete=models.CASCADE)
-	code = models.CharField(max_length=1, choices=machiavelli.ORDER_CODES)
+	code = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().ORDER_CODES))
 	destination = models.ForeignKey(scenarios.Area, blank=True, null=True, related_name='event_destination', on_delete=models.CASCADE)
-	conversion = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES, blank=True, null=True)
-	subtype = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES, blank=True, null=True)
+	conversion = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES), blank=True, null=True)
+	subtype = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES), blank=True, null=True)
 	suborigin = models.ForeignKey(scenarios.Area, related_name='event_suborigin', blank=True, null=True, on_delete=models.CASCADE)
-	subcode = models.CharField(max_length=1, choices=machiavelli.ORDER_CODES, blank=True, null=True)
+	subcode = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().ORDER_SUBCODES), blank=True, null=True)
 	subdestination = models.ForeignKey(scenarios.Area, blank=True, null=True, related_name='event_subdestination', on_delete=models.CASCADE)
-	subconversion = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES, blank=True, null=True)
+	subconversion = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES), blank=True, null=True)
 
 	def event_class(self):
 		return "order-event"
@@ -220,12 +227,12 @@ class OrderEvent(BaseEvent):
 		return msg
 
 def log_order(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Order), "sender must be an Order"
+	assert isinstance(sender, get_machiavelli_models().Order), "sender must be an Order"
 	try:
 		destination = sender.destination.board_area
 	except:
 		destination = None
-	if isinstance(sender.subunit, machiavelli.Unit):
+	if isinstance(sender.subunit, get_machiavelli_models().Unit):
 		subtype = sender.subunit.type
 		suborigin = sender.subunit.area.board_area
 	else:
@@ -264,7 +271,7 @@ class StandoffEvent(BaseEvent):
 						}
 
 def log_standoff(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(StandoffEvent, sender.game,
 					classname="StandoffEvent",
 					area = sender.board_area)
@@ -276,8 +283,8 @@ class ConversionEvent(BaseEvent):
 
 	country = models.ForeignKey(scenarios.Country, null=True, blank=True, on_delete=models.CASCADE)
 	area = models.ForeignKey(scenarios.Area, on_delete=models.CASCADE)
-	before = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
-	after = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	before = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
+	after = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 
 	def event_class(self):
 		return "conversion-event"
@@ -289,7 +296,7 @@ class ConversionEvent(BaseEvent):
 						}
 
 def log_conversion(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(ConversionEvent, sender.player.game,
 					classname="ConversionEvent",
 					country=sender.player.contender.country,
@@ -321,7 +328,7 @@ class ControlEvent(BaseEvent):
 						}
 
 def log_control(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(ControlEvent, sender.player.game,
 					classname="ControlEvent",
 					country=sender.player.contender.country,
@@ -334,7 +341,7 @@ class MovementEvent(BaseEvent):
 	""" Event triggered when a unit moves to a different province. """
 
 	country = models.ForeignKey(scenarios.Country, null=True, blank=True, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	origin = models.ForeignKey(scenarios.Area, related_name="movement_origin", on_delete=models.CASCADE)
 	destination = models.ForeignKey(scenarios.Area, related_name="movement_destination", on_delete=models.CASCADE)
 
@@ -348,7 +355,7 @@ class MovementEvent(BaseEvent):
 				}
 
 def log_movement(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(MovementEvent, sender.player.game,
 					classname="MovementEvent",
 					country = sender.player.contender.country,
@@ -362,7 +369,7 @@ class RetreatEvent(BaseEvent):
 	""" Event triggered when a unit retreats. """
 
 	country = models.ForeignKey(scenarios.Country, null=True, blank=True, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	origin = models.ForeignKey(scenarios.Area, related_name="retreat_origin", on_delete=models.CASCADE)
 	destination = models.ForeignKey(scenarios.Area, related_name="retreat_destination", on_delete=models.CASCADE)
 
@@ -382,7 +389,7 @@ class RetreatEvent(BaseEvent):
 					}
 
 def log_retreat(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(RetreatEvent, sender.player.game,
 					classname="RetreatEvent",
 					country = sender.player.contender.country,
@@ -422,7 +429,7 @@ class UnitEvent(BaseEvent):
 	"""
 
 	country = models.ForeignKey(scenarios.Country, null=True, blank=True, on_delete=models.CASCADE)
-	type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES)
+	type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES))
 	area = models.ForeignKey(scenarios.Area, on_delete=models.CASCADE)
 	message = models.PositiveIntegerField(choices=UNIT_EVENTS)
 	
@@ -445,7 +452,7 @@ class UnitEvent(BaseEvent):
 						}
 
 def log_broken_support(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 					classname="UnitEvent",
 					country = sender.player.contender.country,
@@ -456,7 +463,7 @@ def log_broken_support(sender, **kwargs):
 signals.support_broken.connect(log_broken_support)
 
 def log_forced_retreat(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 				classname="UnitEvent",
 				country = sender.player.contender.country,
@@ -467,7 +474,7 @@ def log_forced_retreat(sender, **kwargs):
 signals.forced_to_retreat.connect(log_forced_retreat)
 
 def log_unit_surrender(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 				classname="UnitEvent",
 				country = sender.player.contender.country,
@@ -478,7 +485,7 @@ def log_unit_surrender(sender, **kwargs):
 signals.unit_surrendered.connect(log_unit_surrender)
 
 def log_siege_start(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 				classname="UnitEvent",
 				country = sender.player.contender.country,
@@ -489,7 +496,7 @@ def log_siege_start(sender, **kwargs):
 signals.siege_started.connect(log_siege_start)
 	
 def log_change_country(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 				classname="UnitEvent",
 				country = sender.player.contender.country,
@@ -500,7 +507,7 @@ def log_change_country(sender, **kwargs):
 signals.unit_changed_country.connect(log_change_country)
 
 def log_to_autonomous(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Unit), "sender must be a Unit"
+	assert isinstance(sender, get_machiavelli_models().Unit), "sender must be a Unit"
 	log_event(UnitEvent, sender.player.game,
 				classname="UnitEvent",
 				country = sender.player.contender.country,
@@ -554,7 +561,7 @@ class CountryEvent(BaseEvent):
 		return "season_%(season)s" % {'season': self.season}
 
 def log_overthrow(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Revolution), "sender must be a Revolution"
+	assert isinstance(sender, get_machiavelli_models().Revolution), "sender must be a Revolution"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = sender.country,
@@ -563,7 +570,7 @@ def log_overthrow(sender, **kwargs):
 signals.government_overthrown.connect(log_overthrow)
 
 def log_conquering(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = kwargs['country'],
@@ -572,7 +579,7 @@ def log_conquering(sender, **kwargs):
 signals.country_conquered.connect(log_conquering)
 
 def log_excommunication(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = sender.contender.country,
@@ -581,7 +588,7 @@ def log_excommunication(sender, **kwargs):
 signals.country_excommunicated.connect(log_excommunication)
 
 def log_elimination(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = kwargs['country'],
@@ -590,7 +597,7 @@ def log_elimination(sender, **kwargs):
 signals.country_eliminated.connect(log_elimination)
 
 def log_assassination(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = sender.contender.country,
@@ -599,7 +606,7 @@ def log_assassination(sender, **kwargs):
 signals.player_assassinated.connect(log_assassination)
 
 def log_lifted_excommunication(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = sender.contender.country,
@@ -608,7 +615,7 @@ def log_lifted_excommunication(sender, **kwargs):
 signals.country_forgiven.connect(log_lifted_excommunication)
 
 def log_assassination_attempt(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(CountryEvent, sender.game,
 					classname="CountryEvent",
 					country = sender.contender.country,
@@ -658,7 +665,7 @@ class DisasterEvent(BaseEvent):
 			return ""
 
 def log_famine_marker(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(DisasterEvent, sender.game,
 					classname="DisasterEvent",
 					area = sender.board_area,
@@ -667,7 +674,7 @@ def log_famine_marker(sender, **kwargs):
 signals.famine_marker_placed.connect(log_famine_marker)
 
 def log_plague(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(DisasterEvent, sender.game,
 					classname="DisasterEvent",
 					area = sender.board_area,
@@ -676,7 +683,7 @@ def log_plague(sender, **kwargs):
 signals.plague_placed.connect(log_plague)
 
 def log_rebellion(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(DisasterEvent, sender.game,
 					classname="DisasterEvent",
 					area = sender.board_area,
@@ -685,7 +692,7 @@ def log_rebellion(sender, **kwargs):
 signals.rebellion_started.connect(log_rebellion)
 
 def log_storm_marker(sender, **kwargs):
-	assert isinstance(sender, machiavelli.GameArea), "sender must be a GameArea"
+	assert isinstance(sender, get_machiavelli_models().GameArea), "sender must be a GameArea"
 	log_event(DisasterEvent, sender.game,
 					classname="DisasterEvent",
 					area = sender.board_area,
@@ -708,7 +715,7 @@ class IncomeEvent(BaseEvent):
 						}
 
 def log_income(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Player), "sender must be a Player"
+	assert isinstance(sender, get_machiavelli_models().Player), "sender must be a Player"
 	log_event(IncomeEvent, sender.game,
 					classname="IncomeEvent",
 					country=sender.contender.country,
@@ -719,9 +726,9 @@ signals.income_raised.connect(log_income)
 class ExpenseEvent(BaseEvent):
 	country = models.ForeignKey(scenarios.Country, on_delete=models.CASCADE)
 	ducats = models.PositiveIntegerField(default=0)
-	type = models.PositiveIntegerField(choices=machiavelli.EXPENSE_TYPES)
+	type = models.PositiveIntegerField(choices=property(lambda self: get_machiavelli_models().EXPENSE_TYPES))
 	area = models.ForeignKey(scenarios.Area, null=True, blank=True, on_delete=models.CASCADE)
-	unit_type = models.CharField(max_length=1, choices=machiavelli.UNIT_TYPES, null=True, blank=True)
+	unit_type = models.CharField(max_length=1, choices=property(lambda self: get_machiavelli_models().UNIT_TYPES), null=True, blank=True)
 
 	def event_class(self):
 		return "expense-event"
@@ -753,7 +760,7 @@ class ExpenseEvent(BaseEvent):
 		return msg % data
 
 def log_expense(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Expense), "sender must be an Expense"
+	assert isinstance(sender, get_machiavelli_models().Expense), "sender must be an Expense"
 	if sender.unit:
 		_area = sender.unit.area.board_area
 		_unit_type = sender.unit.type
@@ -785,7 +792,7 @@ class UncoverEvent(BaseEvent):
 					}
 			
 def log_uncover(sender, **kwargs):
-	assert isinstance(sender, machiavelli.Diplomat), "sender must be a Diplomat"
+	assert isinstance(sender, get_machiavelli_models().Diplomat), "sender must be a Diplomat"
 	log_event(UncoverEvent, sender.player.game,
 					classname="UncoverEvent",
 					country=sender.player.contender.country,
